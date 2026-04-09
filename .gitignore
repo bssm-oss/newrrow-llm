@@ -1,0 +1,8 @@
+.DS_Store
+node_modules/
+.playwright-mcp/
+.sisyphus/
+bin/
+newrrow/
+package.json
+package-lock.json
