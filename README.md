@@ -1,104 +1,77 @@
 # newrrowllm
 
-`newrrowllm` is a Go CLI for the BSSM NEWRROW CSR platform agent. It connects to a pre-started Lightpanda browser over CDP, persists the authenticated session, sends a chat message to the built-in CSR agent, and prints the reply in your terminal.
+`newrrowllm`은 BSSM NEWRROW CSR 플랫폼의 내장 에이전트와 터미널에서 대화하기 위한 Go CLI입니다.
 
-## Features
+이 도구는 다음 흐름을 목표로 합니다.
 
-- `newrrowllm auth` opens the CSR platform in the connected browser, uses `NEWRROW_EMAIL` and `NEWRROW_PASSWORD` automatically when available, falls back to manual completion when they are not, continues through the invitation screen if it appears, and saves the authenticated session to `~/.newrrowllm/cookies.json`.
-- `newrrowllm chat "hello"` restores the saved session, tries the browser UI path first, and falls back to the authenticated reply transport when Lightpanda does not render the launcher reliably.
-- `newrrowllm status` checks whether the saved cookies still reach the protected CSR page without redirecting to auth.
-- `newrrowllm logout` deletes the persisted cookie file.
+- 브라우저(CDP)에 로그인 세션을 1회 생성하고 저장
+- 저장된 세션으로 이후 명령을 재사용
+- `chat`, `status`, `logout`을 터미널에서 바로 실행
 
-## Prerequisites
+## 핵심 기능
 
-- Go 1.21+
-- A Lightpanda browser already running with CDP enabled on `127.0.0.1:9222`
-- Access to the BSSM NEWRROW CSR platform
+- `newrrowllm auth`
+  - CSR 플랫폼 로그인 세션을 생성하고 저장합니다.
+  - `NEWRROW_EMAIL`, `NEWRROW_PASSWORD`가 있으면 로그인 폼을 자동 제출합니다.
+  - 없으면 브라우저에서 직접 로그인한 뒤 완료를 진행합니다.
+- `newrrowllm chat "메시지"`
+  - 저장된 세션이 있으면 바로 재사용합니다.
+  - 세션이 없거나 만료되면 인증을 다시 시도한 뒤 메시지를 보냅니다.
+  - `NEWRROW_EMAIL`, `NEWRROW_PASSWORD`가 있으면 초기 채팅 명령 하나만으로도 세션을 만들고 메시지를 전송할 수 있습니다.
+- `newrrowllm status`
+  - 현재 저장된 세션이 유효한지 확인합니다.
+- `newrrowllm logout`
+  - 저장된 세션 파일을 삭제합니다.
 
-## Install Lightpanda
+## 요구 사항
 
-Follow the official installation instructions from Lightpanda:
+- Go 1.21 이상
+- CDP를 제공하는 브라우저 1개
+  - 현재 기본값은 `http://127.0.0.1:9222`
+  - Lightpanda 또는 Chrome 계열 브라우저의 원격 디버깅 포트를 여기에 맞추면 됩니다.
+- BSSM NEWRROW CSR 접근 권한
 
-- https://lightpanda.io/docs/
+## 설치
 
-## Start Lightpanda CDP
-
-This CLI does **not** launch Lightpanda for you. Start it yourself first.
-
-Example:
+### 1) GitHub에서 바로 설치
 
 ```bash
-./lightpanda --host 127.0.0.1 --port 9222
+go install github.com/bssm-oss/newrrow-llm@latest
 ```
 
-For `auth`, run Lightpanda in a visible mode so you can complete login manually in the browser window.
+설치 후 실행 파일은 일반적인 Go 바이너리 경로(`$GOBIN` 또는 `$GOPATH/bin`)에 생성됩니다.
 
-## Build
+### 2) 저장소를 받은 뒤 설치
 
 ```bash
+git clone https://github.com/bssm-oss/newrrow-llm.git
+cd newrrow-llm
 make download
 make build
 ```
 
-The binary will be created at `bin/newrrowllm`.
-
-You can also install it with normal Go tooling:
+또는:
 
 ```bash
 go mod download
 go install .
 ```
 
-## Usage
+## CDP 브라우저 준비
 
-### Authenticate and save cookies
+이 CLI는 브라우저를 직접 띄우지 않습니다. 먼저 CDP 가능한 브라우저를 실행해야 합니다.
 
-```bash
-bin/newrrowllm auth
-```
-
-Expected flow:
-
-1. The CLI opens `https://bssm.newrrow.com/csr-platform/home` in the connected browser.
-2. If `NEWRROW_EMAIL` and `NEWRROW_PASSWORD` are set, the CLI submits the login form automatically.
-3. Otherwise, complete login manually in the visible browser and press Enter when prompted.
-4. If the account lands on the invitation page first, the CLI continues to `/csr-platform/home` before saving the session.
-5. The CLI saves the authenticated session to the configured cookie file.
-
-### Send a chat message
+예시:
 
 ```bash
-bin/newrrowllm chat "안녕, 오늘 일정 알려줘"
+./lightpanda --host 127.0.0.1 --port 9222
 ```
 
-If the saved session is missing or expired, the command fails with a prompt to run `newrrowllm auth` first.
+`auth`를 쓸 때는 사용자가 로그인 과정을 볼 수 있도록 브라우저가 실제로 떠 있어야 합니다.
 
-### Check session status
+## 환경 변수
 
-```bash
-bin/newrrowllm status
-```
-
-### Delete cookies
-
-```bash
-bin/newrrowllm logout
-```
-
-## Configuration
-
-You can configure the CLI with flags, environment variables, or a `newrrowllm.yaml` file in the current directory or `~/.newrrowllm/`.
-
-### Common flags
-
-```bash
-newrrowllm --cdp-endpoint http://127.0.0.1:9222 \
-  --cookies-path ~/.newrrowllm/cookies.json \
-  --timeout 60s \
-  --login-timeout 5m
-```
-
-### Environment variables
+자주 쓰는 값은 아래처럼 환경 변수로 둘 수 있습니다.
 
 - `NEWRROWLLM_CDP_ENDPOINT`
 - `NEWRROWLLM_BASE_URL`
@@ -112,9 +85,76 @@ newrrowllm --cdp-endpoint http://127.0.0.1:9222 \
 - `NEWRROWLLM_AGENT_READY_SELECTOR`
 - `NEWRROWLLM_AGENT_LAUNCHER_SELECTOR`
 - `NEWRROWLLM_AGENT_REPLY_SELECTOR`
-- `NEWRROWM_AGENT_REPLY_SELECTOR` (supported for compatibility with the requested name)
+- `NEWRROWM_AGENT_REPLY_SELECTOR` (호환용)
 
-### Example config file
+## 기본 사용법
+
+### 1) 세션 생성
+
+```bash
+newrrowllm auth
+```
+
+동작 개요:
+
+1. CDP 브라우저에 인증 페이지를 엽니다.
+2. `NEWRROW_EMAIL`, `NEWRROW_PASSWORD`가 있으면 로그인 폼을 자동으로 제출합니다.
+3. 필요하면 초대/홈 전환 단계를 통과합니다.
+4. 세션 파일을 저장합니다.
+
+### 2) 바로 채팅
+
+```bash
+newrrowllm chat "안녕, 오늘 일정 알려줘"
+```
+
+의도된 사용 경험은 이 명령 하나로 동작하는 것입니다.
+
+- 저장된 세션이 있으면 그대로 사용합니다.
+- 세션이 없거나 만료되면 내부적으로 인증을 시도한 뒤 메시지를 보냅니다.
+- `NEWRROW_EMAIL`, `NEWRROW_PASSWORD`가 설정되어 있으면 아래처럼 바로 실행할 수 있습니다.
+
+```bash
+NEWRROW_EMAIL="your-id@example.com" \
+NEWRROW_PASSWORD="your-password" \
+newrrowllm chat "안녕, 오늘 일정 알려줘"
+```
+
+### 3) 세션 상태 확인
+
+```bash
+newrrowllm status
+```
+
+### 4) 로그아웃
+
+```bash
+newrrowllm logout
+```
+
+## 자주 쓰는 옵션
+
+```bash
+newrrowllm \
+  --cdp-endpoint http://127.0.0.1:9222 \
+  --cookies-path ~/.newrrowllm/cookies.json \
+  --timeout 60s \
+  --login-timeout 5m \
+  chat "안녕"
+```
+
+## 선택자 커스터마이징
+
+CSR 에이전트 UI는 고정되어 있지 않을 수 있으므로, 필요하면 선택자를 환경 변수나 설정으로 덮어쓸 수 있습니다.
+
+기본적으로 아래 계열을 사용합니다.
+
+- 입력창: `textarea`, `[contenteditable="true"]`, PromptBar 계열 클래스
+- 런처: `NewrrowAgentFloatingButton` 계열 클래스
+- 전송 버튼: `button[type="submit"]`, 전송 아이콘 버튼
+- 응답 노드: `AgentMessage` 계열 클래스
+
+## 설정 파일 예시
 
 ```yaml
 cdp-endpoint: http://127.0.0.1:9222
@@ -122,42 +162,24 @@ base-url: https://bssm.newrrow.com/csr-platform/home
 cookies-path: ~/.newrrowllm/cookies.json
 timeout: 60s
 login-timeout: 5m
-chat-input-selector: 'textarea, [contenteditable="true"], .chat-input'
-chat-send-selector: 'button[type="submit"], [aria-label="Send"], button:has(svg[data-icon="send"]), button:has(svg)'
-chat-ready-selector: 'textarea[class*="NewrrowAgentPromptBar-module__input"], button[class*="NewrrowAgentFloatingButton-module__container"]'
+chat-input-selector: 'textarea[class*="NewrrowAgentPromptBar-module__input"], textarea'
+chat-send-selector: 'button[class*="NewrrowAgentPromptBar-module__sendMessageButton"], button[type="submit"]'
 chat-launcher-selector: 'button[class*="NewrrowAgentFloatingButton-module__container"]'
 chat-reply-selector: 'li[class*="AgentMessage-module__container"], [class*="AgentMessage-module__messageSection"]'
 ```
 
-## Customizing selectors
-
-The CSR agent UI is not assumed to be stable. If the platform changes, override the selectors instead of changing code first.
-
-Recommended targets:
-
-- Input: `textarea`, `[contenteditable="true"]`, `.chat-input`
-- Launcher: `button[class*="NewrrowAgentFloatingButton-module__container"]`
-- Send button: `button[type="submit"]`, `[aria-label="Send"]`
-- Reply nodes: assistant/agent/bot/response message containers
-
-Because selectors are tried in order, place the most specific selector first.
-
-## Error handling
-
-- If Lightpanda is unavailable, the CLI prints: `Lightpanda CDP not running. Start it with: ./lightpanda --host 127.0.0.1 --port 9222`
-- If cookies are missing, `chat` asks you to run `auth` first.
-- If cookies are expired, `status` reports that the session expired and `chat` fails until you re-run `auth`.
-
-## Development
+## 개발용 명령
 
 ```bash
-make fmt
-make test
+make download
 make build
+make test
+make fmt
 ```
 
-## Notes and limitations
+## 현재 주의 사항
 
-- `auth` assumes you started Lightpanda externally in a visible mode.
-- Because the exact CSR agent DOM is unknown, selector overrides may be required over time.
-- The CLI persists the authenticated browser session in the configured JSON file and reuses it on later runs.
+- 브라우저 CDP 세션 상태는 엔진별 차이가 있어서, Lightpanda와 일반 브라우저가 완전히 동일하게 동작하지 않을 수 있습니다.
+- `auth`, `status`, `logout`은 기본적으로 CDP 브라우저가 있는 환경을 전제로 합니다.
+- `chat`은 저장된 세션이 없을 때 환경 변수 기반 인증 bootstrap 경로를 사용할 수 있습니다.
+- 실제 운영 전에 본인 환경에서 `chat`, `auth -> status -> chat -> logout` 흐름을 각각 확인하는 것이 좋습니다.
