@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/yourusername/newrrowllm/cmd"
+	"github.com/bssm-oss/newrrow-llm/cmd"
 )
 
 func main() {
