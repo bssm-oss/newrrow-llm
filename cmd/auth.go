@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yourusername/newrrowllm/internal/auth"
-	"github.com/yourusername/newrrowllm/internal/browser"
+	"github.com/bssm-oss/newrrow-llm/internal/auth"
+	"github.com/bssm-oss/newrrow-llm/internal/browser"
 )
 
 func init() {

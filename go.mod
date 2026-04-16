@@ -1,4 +1,4 @@
-module github.com/yourusername/newrrowllm
+module github.com/bssm-oss/newrrow-llm
 
 go 1.21
 

@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/yourusername/newrrowllm/internal/browser"
+	"github.com/bssm-oss/newrrow-llm/internal/browser"
 )
 
 var (
