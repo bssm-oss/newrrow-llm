@@ -16,13 +16,13 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/sirupsen/logrus"
 
-	"github.com/yourusername/newrrowllm/internal/browser"
+	"github.com/bssm-oss/newrrow-llm/internal/browser"
 )
 
 func SendChatMessage(ctx context.Context, cfg browser.Config, message string, logger *logrus.Logger) (string, error) {
 	if _, err := os.Stat(cfg.CookiesPath); err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("cookies not found. Run 'newrrowllm auth' first")
+			return "", fmt.Errorf("saved session not found. Run 'newrrowllm chat' to authenticate automatically or 'newrrowllm auth' to prime a session")
 		}
 		return "", fmt.Errorf("stat cookies: %w", err)
 	}
@@ -36,17 +36,26 @@ func SendChatMessage(ctx context.Context, cfg browser.Config, message string, lo
 		return "", err
 	}
 
+	return sendPreparedMessage(ctx, cfg, message, logger, beforeCount, beforeText)
+}
+
+func SendChatMessageHTTPOnly(cfg browser.Config, message string) (string, error) {
+	return sendMessageViaHTTPStream(cfg, message)
+}
+
+func SendChatMessageInCurrentSession(ctx context.Context, cfg browser.Config, message string, logger *logrus.Logger) (string, error) {
+	beforeCount, beforeText, err := navigateAndPrepare(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	return sendPreparedMessage(ctx, cfg, message, logger, beforeCount, beforeText)
+}
+
+func sendPreparedMessage(ctx context.Context, cfg browser.Config, message string, logger *logrus.Logger, beforeCount int, beforeText string) (string, error) {
 	inputSelector, err := firstVisibleSelector(ctx, cfg.ActionTimeout, cfg.InputSelectors)
 	if err != nil || inputSelector == "" {
-		reply, fetchErr := sendMessageViaHTTPStream(cfg, message)
-		if fetchErr == nil {
-			return reply, nil
-		}
-		reply, browserFetchErr := sendMessageViaBrowserFetch(ctx, cfg, message)
-		if browserFetchErr == nil {
-			return reply, nil
-		}
-		return "", browserFetchErr
+		return sendMessageViaFallbacks(ctx, cfg, message)
 	}
 
 	if err := setInputAndSend(ctx, inputSelector, message, logger, cfg.SendSelectors, cfg.ActionTimeout); err != nil {
@@ -59,6 +68,20 @@ func SendChatMessage(ctx context.Context, cfg browser.Config, message string, lo
 	}
 
 	return reply, nil
+}
+
+func sendMessageViaFallbacks(ctx context.Context, cfg browser.Config, message string) (string, error) {
+	reply, browserFetchErr := sendMessageViaBrowserFetch(ctx, cfg, message)
+	if browserFetchErr == nil {
+		return reply, nil
+	}
+
+	reply, httpErr := sendMessageViaHTTPStream(cfg, message)
+	if httpErr == nil {
+		return reply, nil
+	}
+
+	return "", fmt.Errorf("send chat via fallback transports failed (browser fetch: %v; http stream: %w)", browserFetchErr, httpErr)
 }
 
 func CheckStatus(ctx context.Context, cfg browser.Config) (bool, string, error) {
@@ -80,6 +103,12 @@ func CheckStatus(ctx context.Context, cfg browser.Config) (bool, string, error) 
 	if !authenticated {
 		return false, currentURL, nil
 	}
+	if _, err := loadSessionForHTTP(cfg.CookiesPath); err != nil {
+		if strings.Contains(err.Error(), "csrAccessToken") {
+			return false, currentURL, nil
+		}
+		return false, currentURL, fmt.Errorf("inspect saved session: %w", err)
+	}
 	return true, currentURL, nil
 }
 
@@ -89,7 +118,7 @@ func navigateAndPrepare(ctx context.Context, cfg browser.Config) (int, string, e
 		return 0, "", err
 	}
 	if !authenticated {
-		return 0, "", fmt.Errorf("session expired. Run 'newrrowllm auth'")
+		return 0, "", fmt.Errorf("session expired. Run 'newrrowllm chat' to re-authenticate automatically or 'newrrowllm auth' to prime a session")
 	}
 
 	if err := openAgentIfNeeded(ctx, cfg); err != nil {
@@ -164,7 +193,12 @@ func authenticatedHomeURL(baseURL string) string {
 }
 
 func openAgentIfNeeded(ctx context.Context, cfg browser.Config) error {
-	deadline := time.Now().Add(cfg.ActionTimeout)
+	probeTimeout := cfg.ActionTimeout
+	if probeTimeout > 10*time.Second {
+		probeTimeout = 10 * time.Second
+	}
+
+	deadline := time.Now().Add(probeTimeout)
 	var launcherSelector string
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
@@ -180,14 +214,14 @@ func openAgentIfNeeded(ctx context.Context, cfg browser.Config) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if launcherSelector == "" {
-		return fmt.Errorf("agent launcher not detected. Run 'newrrowllm auth' again or override the chat selectors")
+		return fmt.Errorf("agent launcher not detected. Retry 'newrrowllm chat', run 'newrrowllm auth', or override the chat selectors")
 	}
 
 	if err := chromedp.Run(ctx, chromedp.Click(launcherSelector, chromedp.ByQuery)); err != nil {
 		return fmt.Errorf("open agent UI with %q: %w", launcherSelector, err)
 	}
 
-	deadline = time.Now().Add(cfg.ActionTimeout)
+	deadline = time.Now().Add(probeTimeout)
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -207,6 +241,34 @@ func sendMessageViaBrowserFetch(ctx context.Context, cfg browser.Config, message
 	var result struct {
 		Reply string `json:"reply"`
 		Error string `json:"error"`
+	}
+	homeURL := authenticatedHomeURL(cfg.BaseURL)
+	_ = chromedp.Run(fetchCtx, chromedp.ActionFunc(func(actionCtx context.Context) error {
+		_, _, _, err := cdppage.Navigate(homeURL).Do(actionCtx)
+		return err
+	}))
+	_ = completeInvitationIfPresent(fetchCtx, homeURL)
+	var tokenReady bool
+	waitTokenScript := `(() => {
+		const readCookie = (name) => document.cookie.split('; ').find((item) => item.startsWith(name + '='))?.split('=').slice(1).join('=') || '';
+		return !!readCookie('csrAccessToken');
+	})()`
+	deadline := time.Now().Add(cfg.LoginTimeout)
+	for time.Now().Before(deadline) {
+		if err := fetchCtx.Err(); err != nil {
+			return "", err
+		}
+		evalErr := chromedp.Run(fetchCtx, chromedp.Evaluate(waitTokenScript, &tokenReady))
+		if evalErr == nil && tokenReady {
+			break
+		}
+		if evalErr != nil && !isTransientLikeAuthErr(evalErr) {
+			return "", fmt.Errorf("wait for browser csrAccessToken: %w", evalErr)
+		}
+		time.Sleep(700 * time.Millisecond)
+	}
+	if !tokenReady {
+		return "", fmt.Errorf("missing csrAccessToken")
 	}
 	script := fmt.Sprintf(`(async () => {
 		let answer = '';
