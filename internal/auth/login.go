@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/network"
@@ -102,7 +101,7 @@ func DirectAuthenticate(cfg browser.Config) error {
 	if email == "" || password == "" {
 		return fmt.Errorf("NEWRROW_EMAIL and NEWRROW_PASSWORD are required when no CDP browser is available")
 	}
-	jar, err := newRecordingJar()
+	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return err
 	}
@@ -178,7 +177,39 @@ func DirectAuthenticate(cfg browser.Config) error {
 
 	_, _ = client.Get(authenticatedHomeURL(cfg.BaseURL))
 
-	persisted := jar.PersistedCookies()
+	persisted := make([]browser.PersistedCookie, 0)
+	seen := map[string]struct{}{}
+	for _, raw := range []string{"https://bssm.newrrow.com", "https://auth.newrrow.com", "https://auth.inhrplus.com"} {
+		u, _ := url.Parse(raw)
+		for _, c := range jar.Cookies(u) {
+			domain := c.Domain
+			if domain == "" {
+				domain = u.Hostname()
+			}
+			path := c.Path
+			if path == "" {
+				path = "/"
+			}
+			key := domain + "|" + path + "|" + c.Name
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			item := browser.PersistedCookie{
+				Name:     c.Name,
+				Value:    c.Value,
+				Domain:   domain,
+				Path:     path,
+				HTTPOnly: c.HttpOnly,
+				Secure:   c.Secure,
+			}
+			if !c.Expires.IsZero() {
+				expires := float64(c.Expires.Unix())
+				item.Expires = &expires
+			}
+			persisted = append(persisted, item)
+		}
+	}
 	if len(persisted) == 0 {
 		return fmt.Errorf("direct auth produced no cookies")
 	}
@@ -194,63 +225,6 @@ func DirectAuthenticate(cfg browser.Config) error {
 		return err
 	}
 	return nil
-}
-
-type recordingJar struct {
-	base http.CookieJar
-	mu   sync.Mutex
-	seen map[string]*http.Cookie
-}
-
-func newRecordingJar() (*recordingJar, error) {
-	base, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, err
-	}
-	return &recordingJar{base: base, seen: map[string]*http.Cookie{}}, nil
-}
-
-func (j *recordingJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
-	j.base.SetCookies(u, cookies)
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	for _, c := range cookies {
-		copyCookie := *c
-		if copyCookie.Domain == "" {
-			copyCookie.Domain = u.Hostname()
-		}
-		if copyCookie.Path == "" {
-			copyCookie.Path = "/"
-		}
-		key := copyCookie.Domain + "|" + copyCookie.Path + "|" + copyCookie.Name
-		j.seen[key] = &copyCookie
-	}
-}
-
-func (j *recordingJar) Cookies(u *url.URL) []*http.Cookie {
-	return j.base.Cookies(u)
-}
-
-func (j *recordingJar) PersistedCookies() []browser.PersistedCookie {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	out := make([]browser.PersistedCookie, 0, len(j.seen))
-	for _, c := range j.seen {
-		item := browser.PersistedCookie{
-			Name:     c.Name,
-			Value:    c.Value,
-			Domain:   c.Domain,
-			Path:     c.Path,
-			HTTPOnly: c.HttpOnly,
-			Secure:   c.Secure,
-		}
-		if !c.Expires.IsZero() {
-			expires := float64(c.Expires.Unix())
-			item.Expires = &expires
-		}
-		out = append(out, item)
-	}
-	return out
 }
 
 func hasCredentials() bool {

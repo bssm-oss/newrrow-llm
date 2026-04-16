@@ -431,6 +431,7 @@ type httpSession struct {
 	Token    string
 	Tenant   string
 	MemberID int
+	Expiry   int64
 }
 
 func loadSessionForHTTP(path string) (*httpSession, error) {
@@ -463,20 +464,23 @@ func loadSessionForHTTP(path string) (*httpSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &httpSession{Cookies: session.Cookies, Token: token, Tenant: payload.Domain, MemberID: payload.Sub}, nil
+	return &httpSession{Cookies: session.Cookies, Token: token, Tenant: payload.Domain, MemberID: payload.Sub, Expiry: payload.Exp}, nil
 }
 
 func decodeCSRToken(token string) (struct {
 	Sub    int
 	Domain string
+	Exp    int64
 }, error) {
 	var payload struct {
 		Sub    string `json:"sub"`
 		Domain string `json:"domain"`
+		Exp    int64  `json:"exp"`
 	}
 	var result struct {
 		Sub    int
 		Domain string
+		Exp    int64
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
@@ -506,7 +510,19 @@ func decodeCSRToken(token string) (struct {
 	} else {
 		result.Domain = payload.Domain
 	}
+	result.Exp = payload.Exp
 	return result, nil
+}
+
+func CheckSavedSessionFile(path string) (bool, error) {
+	session, err := loadSessionForHTTP(path)
+	if err != nil {
+		return false, err
+	}
+	if session.Expiry == 0 {
+		return false, nil
+	}
+	return time.Now().Unix() < session.Expiry, nil
 }
 
 func (s *httpSession) httpClient(timeout time.Duration) *http.Client {

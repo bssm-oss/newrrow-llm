@@ -29,7 +29,16 @@ var statusCmd = &cobra.Command{
 
 		ctx, cancel, err := browser.ConnectToLightpanda(cmd.Context(), appCfg)
 		if err != nil {
-			return err
+			valid, fileErr := agent.CheckSavedSessionFile(appCfg.CookiesPath)
+			if fileErr != nil {
+				return fileErr
+			}
+			if valid {
+				fmt.Fprintln(cmd.OutOrStdout(), "✅ Session valid (saved session file)")
+				return nil
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "⚠️ Session expired. Run 'newrrowllm chat' to re-authenticate automatically or 'newrrowllm auth' to save a fresh session.")
+			return nil
 		}
 		defer cancel()
 
